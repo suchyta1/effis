@@ -458,7 +458,7 @@ class Workflow(UseRunner):
                 '''
 
                 #fullcmd = [self.Campaign.ManagerCommand, "--files"] + bp + [subcmd, storepath]
-                fullcmd = [self.Campaign.ManagerCommand, subcmd, storepath, "--files"] + bp
+                fullcmd = [self.Campaign.ManagerCommand, "manager", storepath, subcmd, "dataset"] + bp
 
                 CompositionLogger.Info("Campaign management: {0}".format(' '.join(fullcmd)))
                 subprocess.call(fullcmd)
