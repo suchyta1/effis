@@ -1,2 +1,7 @@
 A: U
-B: V(1,0,2)[:,:,0]
+#B: V(1,0,2)[:,:40,0]
+B:
+  InName: V
+  Transpose: (1, 0, 2)
+  Selection: (:, :40, 0)
+C: step
