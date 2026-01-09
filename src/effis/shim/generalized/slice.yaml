@@ -2,6 +2,6 @@ A: U
 #B: V(1,0,2)[:,:40,0]
 B:
   InName: V
-  Transpose: (1, 0, 2)
-  Selection: (:, :40, 0)
+  Transpose: (2, 0, 1)
+  Selection: (:, 0, 10:12)
 C: step

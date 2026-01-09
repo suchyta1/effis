@@ -386,12 +386,18 @@ class BlockServer:
 
 
     @classmethod
-    def GetSelectionDims(cls, vr, var):
+    def GetSelectionDims(cls, vr, var, transpose):
         shape = var.shape()
         ndim = len(shape)
 
         Start = [0]*ndim
         Count = var.shape()
+
+        '''
+        Start = np.zeros((ndim, ), dtype=np.int64)
+        Count = np.array(var.shape(), dtype=np.int64)
+        '''
+
 
         if vr.SelectionStr is not None:
 
@@ -402,7 +408,8 @@ class BlockServer:
                     f"[...] dimensionality cannot be greater than {ndim}"
                 )
 
-            for i, sdim in enumerate(sarr):
+            for i, sdim in zip(transpose, sarr):
+
                 sdim = sdim.strip()
 
                 pattern = re.compile(r"(\d*)\s*:\s*(\d*)")
@@ -430,13 +437,15 @@ class BlockServer:
                     continue
 
                 TransposeDims = self.GetTransposeDims(vr, var)
-                Start, Count = self.GetSelectionDims(vr, var)
+                Start, Count = self.GetSelectionDims(vr, var, TransposeDims)
 
                 xml = self.WriteXML(
                     var.name(),
                     filename,
-                    np.array(Start)[list(TransposeDims)],
-                    np.array(Count)[list(TransposeDims)],
+                    Start,
+                    Count,
+                    #np.array(Start)[list(TransposeDims)],
+                    #np.array(Count)[list(TransposeDims)],
                 )
 
                 if xml is not None:
@@ -588,39 +597,41 @@ class BlockServer:
                 #var.set_block_selection(blocknumber)
 
                 TransposeDims = self.GetTransposeDims(self.vrs[filename][varnumber], var)
-                Start, Count = self.GetSelectionDims(self.vrs[filename][varnumber], var)
-                start = np.array(Start)[list(TransposeDims)]
-                count = np.array(Count)[list(TransposeDims)]
+                Start, Count = self.GetSelectionDims(self.vrs[filename][varnumber], var, TransposeDims)
 
                 block = OpenStreams[filename].engine.blocks_info(self.vrs[filename][varnumber].InName, 0)[blocknumber]
-                blockstart = self.GetAsInts(block['Start'].split(','))[list(TransposeDims)]
-                blockcount = self.GetAsInts(block['Count'].split(','))[list(TransposeDims)]
-                thisstart = np.copy(blockstart)
-                thiscount = np.copy(blockcount)
+                blockstart = self.GetAsInts(block['Start'].split(','))
+                blockcount = self.GetAsInts(block['Count'].split(','))
+
+                readstart = np.copy(blockstart)
+                readcount = np.copy(blockcount)
 
                 if Count == var.shape():
                     data = OpenStreams[filename].read(varname, block_id=blocknumber)
 
                 else:
 
-                    for i in range(start.shape[0]):
+                    for i in range(len(Start)):
 
-                        if start[i] > blockstart[i]:
-                            thisstart[i] = start[i]
+                        if Start[i] > blockstart[i]:
+                            readstart[i] = Start[i]
 
-                        if (thisstart[i] + count[i]) > (blockstart[i] + blockcount[i]):
-                            diff = thisstart[i] - blockstart[i]
-                            thiscount[i] = blockcount[i] - diff
+                        if (readstart[i] + Count[i]) > (blockstart[i] + blockcount[i]):
+                            diff = readstart[i] - blockstart[i]
+                            readcount[i] = blockcount[i] - diff
 
-                        if (thisstart[i] + count[i]) < (blockstart[i] + blockcount[i]):
-                            thiscount[i] = count[i]
+                        if (readstart[i] + Count[i]) < (blockstart[i] + blockcount[i]):
+                            readcount[i] = Count[i]
 
-                    data = OpenStreams[filename].read(varname, start=list(thisstart), count=list(thiscount))
+                    #print(varname, readstart, readcount)
+                    data = OpenStreams[filename].read(varname, start=list(readstart), count=list(readcount))
                 
                 data = np.transpose(data, axes=TransposeDims)
-                newstart = thisstart[list(TransposeDims)].tolist()
+                newcount = np.array(Count)[list(TransposeDims)].tolist()
+                newstart = (readstart - np.array(Start))[list(TransposeDims)].tolist()
+                #print(varname, outname, newcount, newstart, list(data.shape))
                 
-                OutStream.write(outname, np.ascontiguousarray(data), Count, newstart, list(data.shape))
+                OutStream.write(outname, np.ascontiguousarray(data), newcount, newstart, list(data.shape))
 
 
 
