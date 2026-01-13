@@ -8,6 +8,7 @@ import numpy as np
 
 import threading
 import time
+from collections import Counter
 
 import xml.etree.ElementTree as ET
 import tempfile
@@ -20,6 +21,48 @@ class VariableRemap:
 
     InName = None
     OutName = None
+
+    def __init__(
+        self,
+        OutName=None,
+        InName=None,
+        Transpose=None,
+        Selection=None,
+        OutSelection=None,
+    ):
+        self.OutName = OutName
+        self.InName = InName
+
+        if Transpose is None:
+            self.Transpose = []
+        elif isinstance(Transpose, (tuple, list, np.ndarray)):
+            self.Transpose = list(Transpose)
+        elif isinstance(Transpose, str):
+            self.Transpose = self.ArrIntFind(Transpose)
+        else:
+            raise TypeError("Unknown Transpose type")
+
+        for i in range(len(self.Transpose)):
+            try:
+                self.Transpose[i] = int(self.Transpose[i])
+            except Exception:
+                raise TypeError("Transpose elements must be integers.")
+        self.Transpose = tuple(self.Transpose)
+        if len(np.unique(self.Transpose)) != len(self.Transpose):
+            raise IndexError(
+                f"Invalid transpose: {self.InName}{self.Transpose}. "
+                f"Cannot repeate dimension."
+            )
+
+        self.SelectionStr = Selection
+        if isinstance(self.SelectionStr, list):
+            self.SelectionStr = str(self.SelectionStr)
+
+        self.OutSelection = OutSelection
+        if isinstance(self.OutSelection, list):
+            self.OutSelection = str(self.OutSelection)
+        self.MultiOutSelection = None
+
 
     @classmethod
     def StrToDict(cls, instr):
@@ -83,41 +126,6 @@ class VariableRemap:
             s = pattern.sub("", s)
             return s
 
-
-    def __init__(
-        self,
-        OutName=None,
-        InName=None,
-        Transpose=None,
-        Selection=None,
-    ):
-        self.OutName = OutName
-        self.InName = InName
-
-        if Transpose is None:
-            self.Transpose = []
-        elif isinstance(Transpose, (tuple, list, np.ndarray)):
-            self.Transpose = list(Transpose)
-        elif isinstance(Transpose, str):
-            self.Transpose = self.ArrIntFind(Transpose)
-        else:
-            raise TypeError("Unknown Transpose type")
-
-        for i in range(len(self.Transpose)):
-            try:
-                self.Transpose[i] = int(self.Transpose[i])
-            except Exception:
-                raise TypeError("Transpose elements must be integers.")
-        self.Transpose = tuple(self.Transpose)
-        if len(np.unique(self.Transpose)) != len(self.Transpose):
-            raise IndexError(
-                f"Invalid transpose: {self.InName}{self.Transpose}. "
-                f"Cannot repeate dimension."
-            )
-
-        self.SelectionStr = Selection
-        if isinstance(self.SelectionStr, list):
-            self.SelectionStr = str(self.SelectionStr)
 
 
 def ExistsVerify(filename):
@@ -254,15 +262,25 @@ class BlockServer:
             AllVars += list(VarInfo[datafile].keys())
 
         self.vrs = {}
+        outnames = []
+
+        OutSelections = {}
+
         for outname in self.MapDict:
 
             if isinstance(self.MapDict[outname], str):
                 vdict = VariableRemap.StrToDict(self.MapDict[outname])
                 vr = VariableRemap(OutName=outname, **vdict)
             else:
-                vr = VariableRemap(OutName=outname, **self.MapDict[outname])
+                if 'OutName' in self.MapDict[outname]:
+                    OutName = self.MapDict[outname]['OutName']
+                    del self.MapDict[outname]['OutName']
+                    vr = VariableRemap(OutName=OutName, **self.MapDict[outname])
+                    outname = OutName
+                else:
+                    vr = VariableRemap(OutName=outname, **self.MapDict[outname])
 
-            #vr = VariableRemap(outname, self.MapDict[outname])
+            outnames += [outname]
 
             Logger.Info(
                 f"{vr.OutName} <-- {vr.InName}; "
@@ -296,7 +314,21 @@ class BlockServer:
             if vr.InFilename not in self.vrs:
                 self.vrs[vr.InFilename] = []
 
+            if vr.OutSelection is not None:
+                if outname not in OutSelections:
+                    OutSelections[outname] = []
+                OutSelections[outname] += [
+                    (vr.InFilename, len(self.vrs[vr.InFilename]))
+                ]
+
             self.vrs[vr.InFilename] += [vr]
+
+        counts = Counter(outnames)
+        duplicates = [item for item, count in counts.items() if count > 1]
+
+        for dup in duplicates:
+            for filename, index in OutSelections[dup]:
+                self.vrs[filename][index].MultiOutSelection = OutSelections[dup]
 
 
     def BuildVR(self):
@@ -392,12 +424,6 @@ class BlockServer:
 
         Start = [0]*ndim
         Count = var.shape()
-
-        '''
-        Start = np.zeros((ndim, ), dtype=np.int64)
-        Count = np.array(var.shape(), dtype=np.int64)
-        '''
-
 
         if vr.SelectionStr is not None:
 
@@ -623,15 +649,91 @@ class BlockServer:
                         if (readstart[i] + Count[i]) < (blockstart[i] + blockcount[i]):
                             readcount[i] = Count[i]
 
-                    #print(varname, readstart, readcount)
                     data = OpenStreams[filename].read(varname, start=list(readstart), count=list(readcount))
                 
                 data = np.transpose(data, axes=TransposeDims)
                 newcount = np.array(Count)[list(TransposeDims)].tolist()
                 newstart = (readstart - np.array(Start))[list(TransposeDims)].tolist()
-                #print(varname, outname, newcount, newstart, list(data.shape))
-                
-                OutStream.write(outname, np.ascontiguousarray(data), newcount, newstart, list(data.shape))
+    
+                if self.vrs[filename][varnumber].OutSelection is None:
+                    OutStream.write(outname, np.ascontiguousarray(data), newcount, newstart, list(data.shape))
+                else:
+
+                    multi = []
+                    for mfilename, mindex in self.vrs[filename][varnumber].MultiOutSelection:
+                        multi += [self.GetSelStuff(self.vrs[mfilename][mindex].OutSelection, newcount)]
+                    multi = np.array(multi)
+
+                    bounds = multi[:, 2, :]
+                    mmax = np.amax(bounds, axis=0)
+                   
+                    r'''
+                    pattern = re.compile(r"(\d*)\s*:\s*(\d*)")
+
+                    vind = 0
+                    sarr = self.vrs[filename][varnumber].OutSelection.split(",")
+                    NewStart = [0]*len(sarr)
+                    NewCount = [1]*len(sarr)
+
+                    for sind, sdim in enumerate(sarr):
+
+                        while (vind + 1 < len(newcount)) and (newcount[vind] == 1):
+                            if mmax[sind] > 1:
+                                vind += 1
+                                
+                        sdim = sdim.strip()
+                        result = pattern.search(sdim)
+
+                        if result is not None:
+                            NewStart[sind] = self.BlankOrInt(result.group(1), 0)
+                            NewCount[sind] = self.BlankOrInt(result.group(2), newcount[vind]-NewStart[sind], NewStart[sind])
+                        else:
+                            arr = vr.ArrIntFind(sdim, label=vr.SelectionStr)
+                            NewStart[sind] = int(arr[0])
+                            NewCount[sind] = 1
+
+                        vind += 1
+                    '''
+                    NewStart, NewCount, morebounds = self.GetSelStuff(
+                        self.vrs[filename][varnumber].OutSelection,
+                        newcount,
+                        mmax=mmax,
+                    )
+
+                    #print(OutStream.current_step(), outname, blocknumber, data.shape, mmax, NewStart, NewCount)
+                    OutStream.write(outname, np.ascontiguousarray(data), list(mmax), list(NewStart), list(NewCount))
+
+
+    def GetSelStuff(self, selstr, newcount, mmax=None):
+
+        pattern = re.compile(r"(\d*)\s*:\s*(\d*)")
+
+        vind = 0
+        sarr = selstr.split(",")
+        NewStart = np.zeros((len(sarr), ), dtype=np.int64)
+        NewCount = np.ones((len(sarr), ), dtype=np.int64)
+
+        for sind, sdim in enumerate(sarr):
+
+            while (mmax is not None) and (vind + 1 < len(newcount)) and (newcount[vind] == 1):
+                if mmax[sind] > 1:
+                    vind += 1
+
+            sdim = sdim.strip()
+            result = pattern.search(sdim)
+
+            if result is not None:
+                NewStart[sind] = self.BlankOrInt(result.group(1), 0)
+                NewCount[sind] = self.BlankOrInt(result.group(2), newcount[vind]-NewStart[sind], NewStart[sind])
+            else:
+                arr = vr.ArrIntFind(sdim, label=vr.SelectionStr)
+                NewStart[sind] = int(arr[0])
+                NewCount[sind] = 1
+
+            vind += 1
+
+        return NewStart, NewCount, NewStart + NewCount
+
 
 
 
