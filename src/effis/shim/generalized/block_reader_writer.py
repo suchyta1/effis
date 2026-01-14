@@ -654,57 +654,53 @@ class BlockServer:
                 data = np.transpose(data, axes=TransposeDims)
                 newcount = np.array(Count)[list(TransposeDims)].tolist()
                 newstart = (readstart - np.array(Start))[list(TransposeDims)].tolist()
+
+                ReadStart = readstart[list(TransposeDims)]
+                ReadCount = readcount[list(TransposeDims)]
     
                 if self.vrs[filename][varnumber].OutSelection is None:
                     OutStream.write(outname, np.ascontiguousarray(data), newcount, newstart, list(data.shape))
+
                 else:
 
                     multi = []
                     for mfilename, mindex in self.vrs[filename][varnumber].MultiOutSelection:
                         multi += [self.GetSelStuff(self.vrs[mfilename][mindex].OutSelection, newcount)]
                     multi = np.array(multi)
-
                     bounds = multi[:, 2, :]
                     mmax = np.amax(bounds, axis=0)
+
+                    multi = []
+                    for mfilename, mindex in self.vrs[filename][varnumber].MultiOutSelection:
+                        multi += [self.GetSelStuff(self.vrs[mfilename][mindex].SelectionStr, newcount)]
+                    multi = np.array(multi)
+                    bounds = multi[:, 0, :]
+                    mmin = np.amin(bounds, axis=0)
                    
-                    r'''
-                    pattern = re.compile(r"(\d*)\s*:\s*(\d*)")
-
-                    vind = 0
-                    sarr = self.vrs[filename][varnumber].OutSelection.split(",")
-                    NewStart = [0]*len(sarr)
-                    NewCount = [1]*len(sarr)
-
-                    for sind, sdim in enumerate(sarr):
-
-                        while (vind + 1 < len(newcount)) and (newcount[vind] == 1):
-                            if mmax[sind] > 1:
-                                vind += 1
-                                
-                        sdim = sdim.strip()
-                        result = pattern.search(sdim)
-
-                        if result is not None:
-                            NewStart[sind] = self.BlankOrInt(result.group(1), 0)
-                            NewCount[sind] = self.BlankOrInt(result.group(2), newcount[vind]-NewStart[sind], NewStart[sind])
-                        else:
-                            arr = vr.ArrIntFind(sdim, label=vr.SelectionStr)
-                            NewStart[sind] = int(arr[0])
-                            NewCount[sind] = 1
-
-                        vind += 1
-                    '''
                     NewStart, NewCount, morebounds = self.GetSelStuff(
                         self.vrs[filename][varnumber].OutSelection,
                         newcount,
                         mmax=mmax,
+                        mmin=mmin,
+                        ReadCount=ReadCount,
+                        ReadStart=ReadStart,
                     )
 
-                    #print(OutStream.current_step(), outname, blocknumber, data.shape, mmax, NewStart, NewCount)
+                    #print(
+                    #    OutStream.current_step(), outname, blocknumber,
+                    #    "data.shape:", data.shape,
+                    #    "mmax:", mmax,
+                    #    "mmin:", mmin,
+                    #    "ReadStart", ReadStart,
+                    #    "ReadCount", ReadCount,
+                    #    "NewStart:", NewStart,
+                    #    "NewCount:", NewCount,
+                    #)
+
                     OutStream.write(outname, np.ascontiguousarray(data), list(mmax), list(NewStart), list(NewCount))
 
 
-    def GetSelStuff(self, selstr, newcount, mmax=None):
+    def GetSelStuff(self, selstr, newcount, mmax=None, mmin=None, ReadStart=None, ReadCount=None):
 
         pattern = re.compile(r"(\d*)\s*:\s*(\d*)")
 
@@ -725,8 +721,15 @@ class BlockServer:
             if result is not None:
                 NewStart[sind] = self.BlankOrInt(result.group(1), 0)
                 NewCount[sind] = self.BlankOrInt(result.group(2), newcount[vind]-NewStart[sind], NewStart[sind])
+
+                if ReadCount is not None:
+                    NewCount[sind] = ReadCount[vind]
+
+                if ReadStart is not None:
+                    NewStart[sind] = ReadStart[vind] - mmin[vind]
+
             else:
-                arr = vr.ArrIntFind(sdim, label=vr.SelectionStr)
+                arr = VariableRemap.ArrIntFind(sdim, label=selstr)
                 NewStart[sind] = int(arr[0])
                 NewCount[sind] = 1
 
