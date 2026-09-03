@@ -5,6 +5,8 @@ import subprocess
 from .log import CompositionLogger
 from .workflow import Chdir
 
+from hpc_campaign.manager import Manager
+
 
 class Campaign:
 
@@ -23,7 +25,7 @@ class Campaign:
         filename=None,
         hostname=None,
         keyfile=None,
-        create=True,
+        create=False,
     ):
         if shutil.which(self.cmd) is None:
             CompositionLogger.RaiseError(
@@ -41,6 +43,7 @@ class Campaign:
         self.filename = os.path.abspath(filename)
         self.hostname = hostname
         self.keyfile = keyfile
+        self._create = True
 
         if os.path.isfile(self.filename):
             CompositionLogger.Info(
@@ -51,6 +54,13 @@ class Campaign:
                 "Creating campaign {0}".format(self.filename)
             )
             self.Create()
+        else:
+            self._create = False
+
+        self.manager = Manager(
+            archive=self.filename,
+            #campaign_store=str(campaign_store)
+        )
 
     @property
     def _manager_(self):
@@ -77,25 +87,73 @@ class Campaign:
                 "{0} already exists. Skipping create.".format(self.filename)
             )
 
-    def Dataset(self, filename, name=None):
-        self.CheckString(name, "name")
-        if not os.path.isfile(self.filename):
+
+    def FileChecks(self, filename):
+
+        if not os.path.isfile(self.filename) and self._create:
             CompositionLogger.Warning(
-                "{0} does not exist. Skipping dataset add.".format(
+                "{0} does not exist. Skipping adding it.".format(
                     self.filename
                 )
             )
+            return False
         elif not os.path.exists(filename):
             CompositionLogger.Warning(
-                "{0} does not exist. Skipping dataset add.".format(
+                "{0} does not exist. Skipping adding it".format(
                     filename
                 )
             )
-        else:
+            return False
+
+        return True
+
+    def Data(self, filename, name=None, cli=False):
+        self.CheckString(name, "name")
+        if not self.FileChecks(filename):
+            return
+
+        if cli:
             dirpath = os.path.dirname(self.filename)
             relpath = os.path.relpath(os.path.abspath(filename), start=dirpath)
-            args = ["dataset", relpath]
+            args = ["data", relpath]
             if name is not None:
                 args += ["--name", name]
             with Chdir(dirpath):
                 self.Manager(*args)
+        else:
+            self.manager.data(filename, name=name)
+
+    def Image(self, filename, name=None, cli=False):
+        self.CheckString(name, "name")
+        if not self.FileChecks(filename):
+            return
+
+        if cli:
+            dirpath = os.path.dirname(self.filename)
+            relpath = os.path.relpath(os.path.abspath(filename), start=dirpath)
+            args = ["image", relpath]
+            if name is not None:
+                args += ["--name", name]
+            with Chdir(dirpath):
+                self.Manager(*args)
+        else:
+            self.manager.image(filename, name=name)
+
+    def Text(self, filename, name=None, store=False, cli=False):
+        self.CheckString(name, "name")
+        if not self.FileChecks(filename):
+            return
+
+        if cli:
+            dirpath = os.path.dirname(self.filename)
+            relpath = os.path.relpath(os.path.abspath(filename), start=dirpath)
+            args = ["text", relpath]
+            if name is not None:
+                args += ["--name", name]
+            if store:
+                args += ["--store"]
+            with Chdir(dirpath):
+                self.Manager(*args)
+        else:
+            self.manager.text(filename, name=name, store=store)
+
