@@ -1,0 +1,7 @@
+
+# Get Variables (possibly multiple files)
+edge_profiles.ggd.phi_potential.values: dpot
+edge_profiles.ggd.electrons.density.values: e_gc_density_df_1d
+
+# Set Grid Descriptions
+edge_profiles.grid_ggd.grid_subset[0].element: rz
